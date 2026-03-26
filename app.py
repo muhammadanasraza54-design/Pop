@@ -1,8 +1,10 @@
 import streamlit as st
 import pandas as pd
 import folium
-from streamlit_folium import st_folium
+from streamlit_folium import folium_static
 
+# Map dikhane ke liye ye line istemal karein
+folium_static(m, width=1200, height=600)
 # Page layout set karein
 st.set_page_config(page_title="TCF Pakistan Map", layout="wide")
 
