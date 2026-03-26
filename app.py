@@ -13,10 +13,10 @@ FILE_NAME = "SSR_Final_Fixed.xlsx"
 def load_data():
     try:
         df = pd.read_excel(FILE_NAME)
-        # Column names ko clean karna
-        df.columns = df.columns.str.strip() # Sirf spaces khatam karein, case wahi rehne dein jo Excel mein hai
+        # Column names ki extra spaces khatam karna
+        df.columns = df.columns.str.strip()
         
-        # ID column dhoondna (Flexible matching)
+        # ID column ko identify karna (Flexible search)
         id_col = [col for col in df.columns if 'ID' in col.upper() or 'CODE' in col.upper()][0]
         df['search_id'] = df[id_col].astype(str)
         
@@ -32,11 +32,10 @@ try:
         st.title("🇵🇰 TCF Schools Interactive Satellite Map")
         
         # --- Sidebar Search ---
-        st.sidebar.title("🔍 Search Options")
+        st.sidebar.title("🔍 Search Schools")
         search_mode = st.sidebar.radio("Search by:", ["All Schools", "School Name", "School ID"])
         
         selected_row = None
-        # Excel ke exact column names use kar rahe hain jo aapne pehle images mein dikhaye thay
         if search_mode == "School Name":
             name_search = st.sidebar.selectbox("School Name chunein:", sorted(data['School'].dropna().unique()))
             selected_row = data[data['School'] == name_search].iloc[0]
@@ -52,7 +51,7 @@ try:
             map_center = [30.3753, 69.3451]
             zoom_lvl = 6
 
-        # Google Satellite Hybrid
+        # Google Satellite Hybrid (Best performance)
         m = folium.Map(
             location=map_center, 
             zoom_start=zoom_lvl, 
@@ -66,16 +65,18 @@ try:
         for index, row in data.iterrows():
             if pd.notnull(row['lat']) and pd.notnull(row['lon']):
                 
-                # Nayi details popup ke liye tayyar karna
-                # Note: 'Girls %' aur 'Boys %' Excel ke column names se match hone chahiye
+                # Nayi details: Region aur Location add ki hain
                 popup_html = f"""
-                <div style="font-family: Arial; width: 200px;">
-                    <h4 style="margin-bottom:5px; color: green;">{row['School']}</h4>
+                <div style="font-family: Arial; width: 220px; font-size: 13px;">
+                    <h4 style="margin-bottom:5px; color: #007BFF;">{row['School']}</h4>
                     <b>ID:</b> {row['search_id']}<br>
+                    <b>Region:</b> {row.get('Region', 'N/A')}<br>
                     <b>Status:</b> {row.get('Status', 'N/A')}<br>
                     <b>Utilization:</b> {row.get('Operational Utilization', 'N/A')}<br>
                     <hr style="margin: 5px 0;">
-                    <span style="color: #e91e63;"><b>Girls:</b> {row.get('Girls %', '0')}%</span><br>
+                    <b>Location:</b> <span style="font-size: 11px; color: #555;">{row.get('Location', 'Address not found')}</span><br>
+                    <hr style="margin: 5px 0;">
+                    <span style="color: #e91e63;"><b>Girls:</b> {row.get('Girls %', '0')}%</span> | 
                     <span style="color: #2196f3;"><b>Boys:</b> {row.get('Boys %', '0')}%</span>
                 </div>
                 """
@@ -84,7 +85,7 @@ try:
                     folium.Marker(
                         location=[row['lat'], row['lon']],
                         popup=folium.Popup(popup_html, max_width=300),
-                        tooltip=f"School: {row['School']}",
+                        tooltip=f"FOUND: {row['School']}",
                         icon=folium.Icon(color='red', icon='star')
                     ).add_to(m)
                 else:
@@ -99,4 +100,3 @@ try:
 
 except Exception as e:
     st.error(f"App Error: {e}")
-    st.info("Check karein ke Excel mein 'Status', 'Operational Utilization', 'Girls %', aur 'Boys %' columns maujood hain.")
