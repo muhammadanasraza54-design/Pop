@@ -36,11 +36,10 @@ def load_data():
         df = pd.read_excel(EXCEL_FILE)
         df.columns = df.columns.str.strip()
         
-        # ERROR FIX: Missing coordinates (NaN) wali rows delete karna taake map crash na ho
+        # ERROR FIX: Missing coordinates (NaN) delete karna
         df = df.dropna(subset=['lat', 'lon'])
         df = df[(df['lat'] != 0) & (df['lon'] != 0)]
         
-        # ID column auto-detect karna
         id_cols = [col for col in df.columns if 'ID' in col.upper() or 'CODE' in col.upper()]
         id_col = id_cols[0] if id_cols else df.columns[0]
         df['search_id'] = df[id_col].astype(str)
@@ -59,20 +58,14 @@ df_full = load_data()
 selected_row = None
 
 if df_full is not None:
-    # --- REGION FILTER (Map ko light karne ke liye) ---
     st.sidebar.subheader("🌍 Map Filters")
     if 'Region' in df_full.columns:
         regions = ["All Regions"] + sorted(df_full['Region'].unique().astype(str).tolist())
         selected_region = st.sidebar.selectbox("Select Region:", regions)
-        
-        if selected_region != "All Regions":
-            df = df_full[df_full['Region'] == selected_region]
-        else:
-            df = df_full
+        df = df_full[df_full['Region'] == selected_region] if selected_region != "All Regions" else df_full
     else:
         df = df_full
 
-    # --- Search Schools ---
     st.sidebar.subheader("🔍 Search Schools")
     search_mode = st.sidebar.radio("Search by:", ["All Schools", "School Name", "School ID"])
     
@@ -92,42 +85,38 @@ if df_full is not None:
 
     st.sidebar.markdown("---")
     radius = st.sidebar.number_input("Radius (KM)", 0.1, 20.0, 2.0, 0.5)
-
-    # Calculate Population
     pop = get_pop_data(st.session_state.center[0], st.session_state.center[1], radius)
     st.sidebar.metric("📊 Total Population", f"{pop:,}")
 
 # --- Main Map View ---
 st.title("🇵🇰 TCF Schools & Population Map")
 
-m = folium.Map(location=st.session_state.center, 
-               zoom_start=st.session_state.zoom, 
-               tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
-               attr='Google')
+m = folium.Map(
+    location=st.session_state.center, 
+    zoom_start=st.session_state.zoom, 
+    tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
+    attr='Google',
+    control_scale=True
+)
 
-# Radius Circle
 folium.Circle(st.session_state.center, radius=radius*1000, color='red', fill=True, fill_opacity=0.1).add_to(m)
 
-# Marker Cluster (Optimized)
-marker_cluster = MarkerCluster(disableClusteringAtZoom=16).add_to(m)
+# Marker Cluster with fix for pins jumping
+marker_cluster = MarkerCluster(disableClusteringAtZoom=16, spiderfyOnMaxZoom=False).add_to(m)
 
 if df_full is not None:
     for _, row in df.iterrows():
-        # Popup HTML
         p_html = f"""
         <div style="font-family: Arial; width: 200px;">
             <h4 style="color:#007BFF; margin-bottom:5px;">{row['School']}</h4>
             <b>ID:</b> {row['search_id']}<br>
             <b>Region:</b> {row.get('Region', 'N/A')}<br>
-            <b>Status:</b> {row.get('Status', 'N/A')}<br>
             <hr style="margin:5px 0;">
-            <span style="color:pink;">Girls: {row.get('Girls %', 0)}%</span> | 
+            <span style="color:red;">Girls: {row.get('Girls %', 0)}%</span> | 
             <span style="color:blue;">Boys: {row.get('Boys %', 0)}%</span>
         </div>
         """
-        
         is_sel = selected_row is not None and str(row['search_id']) == str(selected_row['search_id'])
-        
         folium.Marker(
             [row['lat'], row['lon']], 
             popup=folium.Popup(p_html, max_width=300),
@@ -135,27 +124,26 @@ if df_full is not None:
             icon=folium.Icon(color='red' if is_sel else 'green', icon='star' if is_sel else 'info-sign')
         ).add_to(m if is_sel else marker_cluster)
 
-# Final Map Output
+# Final Map Output - Refined for Persistence
 out = st_folium(
     m,
     center=st.session_state.center,
     zoom=st.session_state.zoom,
-    key="tcf_final_v1",
+    key="tcf_map_v2",
     width=1350,
     height=700,
-    returned_objects=["last_object_clicked", "center", "zoom"]
+    returned_objects=["center", "zoom", "last_object_clicked"]
 )
 
-# Interaction: Marker click par population center update karna
+# Logic to prevent jumping back after zoom/pan
 if out:
-    if out.get("center"):
-        st.session_state.center = [out["center"]["lat"], out["center"]["lng"]]
-    if out.get("zoom"):
-        st.session_state.zoom = out["zoom"]
-        
-    if out.get("last_object_clicked"):
-        click_lat = out["last_object_clicked"]["lat"]
-        click_lon = out["last_object_clicked"]["lng"]
-        if [click_lat, click_lon] != st.session_state.center:
-            st.session_state.center = [click_lat, click_lon]
-            st.rerun()
+    new_zoom = out.get("zoom")
+    new_center = out.get("center")
+    
+    if new_zoom and new_zoom != st.session_state.zoom:
+        st.session_state.zoom = new_zoom
+    
+    if new_center:
+        new_coords = [new_center["lat"], new_center["lng"]]
+        if new_coords != st.session_state.center:
+            st.session_state.center = new_coords
