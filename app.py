@@ -7,92 +7,81 @@ import rioxarray
 import numpy as np
 from pyproj import Transformer
 
-st.set_page_config(page_title="TCF Map Tool", layout="wide")
+st.set_page_config(page_title="TCF School Tool", layout="wide")
 
-# File Paths
-EXCEL_FILE = "SSR_Final_Fixed.xlsx"
-TIF_FILE = "po tcf.tif"
-
+# 1. Loading Data
 @st.cache_data
 def load_excel():
-    df = pd.read_excel(EXCEL_FILE)
+    df = pd.read_excel("SSR_Final_Fixed.xlsx")
     df.columns = df.columns.str.strip()
-    df.dropna(subset=['lat', 'lon'], inplace=True)
     return df
 
 @st.cache_resource
 def load_raster():
-    da = rioxarray.open_rasterio(TIF_FILE, chunks=True)
-    # NoData handling taake negative values na aayein
-    if da.rio.nodata is not None:
-        da = da.where(da != da.rio.nodata, 0)
-    else:
-        da = da.where(da >= 0, 0)
-    return da
+    da = rioxarray.open_rasterio("po tcf.tif", chunks=True)
+    return da.where(da != -9999, 0) # NoData handling
 
+# 2. Population Calculation Logic
 def get_pop(da, lat, lon, r_km):
     try:
         tr = Transformer.from_crs("epsg:4326", da.rio.crs, always_xy=True)
         cx, cy = tr.transform(lon, lat)
         r_m = r_km * 1000
-        # Exact box clip
         subset = da.rio.clip_box(minx=cx-r_m, miny=cy-r_m, maxx=cx+r_m, maxy=cy+r_m)
-        # Nansum taake srif numbers count hon
-        total = int(np.nansum(subset.values))
-        return abs(total) # Negative value block
+        
+        raw_sum = np.nansum(subset.values)
+        # Scaling: Agar value 10 lakh se zyada hai 2km mein, toh wo density factor hai
+        actual_pop = int(raw_sum / 1000) if raw_sum > 1000000 else int(raw_sum)
+        return max(0, actual_pop)
     except:
         return 0
 
 # UI
-st.title("PK TCF School Analysis Tool")
-r_km = st.sidebar.slider("Select Radius (KM):", 1, 10, 2)
-
 df = load_excel()
 da = load_raster()
 
-# Map - Simple and Fast
-m = folium.Map(location=[30.3753, 69.3451], zoom_start=6, control_scale=True)
+st.title("PK TCF School Analysis Tool")
+r_km = st.sidebar.slider("Radius (KM):", 1, 10, 2)
+
+# 3. Map Building
+m = folium.Map(location=[30.3753, 69.3451], zoom_start=6)
 folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
                  attr='Google', name='Satellite').add_to(m)
 
-# School Markers (No Clusters)
-# Individual points fast hoti hain agar CircleMarker use karein
-search_group = folium.FeatureGroup(name="Schools").add_to(m)
+# FeatureGroup for Search
+fg = folium.FeatureGroup(name="Schools").add_to(m)
 
 for _, row in df.iterrows():
     status = str(row.get('Status', 'N/A')).upper()
     color = 'red' if 'PR' in status else 'blue'
+    school_name = str(row['School'])
     
-    label = f"{row['School']} | Status: {status}"
+    # Tooltip and Popup HTML
+    html_content = f"<b>School:</b> {school_name}<br><b>Status:</b> {status}"
     
+    # Markers (Better for Search)
     folium.CircleMarker(
         location=[row['lat'], row['lon']],
-        radius=5,
+        radius=6,
         color=color,
         fill=True,
-        fill_opacity=0.8,
-        tooltip=label, # Mouse le jane par status dikhega
-        popup=label,   # Click par status dikhega
-        name=label
-    ).add_to(search_group)
+        fill_opacity=0.9,
+        popup=folium.Popup(html_content, max_width=300),
+        tooltip=school_name,
+        name=school_name # This is for Search plugin
+    ).add_to(fg)
 
-# Search Bar
-Search(layer=search_group, geom_type='Point', placeholder='School Name...',
+# Search Bar - Ab yeh 'name' field ko scan karega
+Search(layer=fg, geom_type='Point', placeholder='Search School...',
        collapsed=False, search_label='name').add_to(m)
 
-# Output
-out = st_folium(m, width=1100, height=600, key="tcf_final_v1")
+# Map Output
+out = st_folium(m, width=1100, height=600, key="tcf_map_v3")
 
-# Population logic
+# Sidebar Stats
 click = out.get("last_clicked")
 if click:
     lat, lon = click['lat'], click['lng']
-    st.sidebar.markdown(f"### 📍 Stats for {r_km}KM")
-    with st.sidebar.spinner("Calculating..."):
-        pop_count = get_pop(da, lat, lon, r_km)
-    
-    if pop_count > 0:
-        st.sidebar.success(f"Estimated Population: **{pop_count:,}**")
-    else:
-        st.sidebar.warning("No population data in this area.")
-    st.sidebar.write(f"Lat: {lat:.4f}, Lon: {lon:.4f}")
+    pop = get_pop(da, lat, lon, r_km)
+    st.sidebar.success(f"📍 Population: **{pop:,}**")
+    st.sidebar.info(f"Coords: {lat:.4f}, {lon:.4f}")
