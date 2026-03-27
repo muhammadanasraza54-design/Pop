@@ -30,7 +30,7 @@ def get_pop_data(lat, lon, rad_km):
     except: return 0
 
 # --- Data Loading & Cleaning (NaN Fix) ---
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner="Loading Data...")
 def load_data():
     try:
         df = pd.read_excel(EXCEL_FILE)
