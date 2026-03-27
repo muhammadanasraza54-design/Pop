@@ -15,7 +15,8 @@ st.set_page_config(page_title="TCF Engineering Map", layout="wide")
 EXCEL_FILE = "SSR_Final_Fixed.xlsx"
 POP_FILE = "pak_total_Pop FN.tif"
 
-# --- Population Logic ---
+# --- Population Logic (Cached for Speed) ---
+@st.cache_data
 def get_pop_data(lat, lon, rad_km):
     if not os.path.exists(POP_FILE): return 0
     try:
@@ -33,7 +34,6 @@ def load_data():
     try:
         df = pd.read_excel(EXCEL_FILE)
         df.columns = df.columns.str.strip()
-        # ID column identify karna
         id_cols = [col for col in df.columns if 'ID' in col.upper() or 'CODE' in col.upper()]
         id_col = id_cols[0] if id_cols else df.columns[0]
         df['search_id'] = df[id_col].astype(str)
@@ -43,6 +43,7 @@ def load_data():
 # --- Session State ---
 if 'center' not in st.session_state: st.session_state.center = [30.3753, 69.3451]
 if 'zoom' not in st.session_state: st.session_state.zoom = 6
+if 'radius' not in st.session_state: st.session_state.radius = 2.0
 
 # Sidebar
 st.sidebar.title("🏗️ TCF Engineering")
@@ -50,7 +51,7 @@ df = load_data()
 selected_row = None
 
 if df is not None:
-    # --- MISSING FEATURE 1: Search Schools ---
+    # --- Search Schools ---
     st.sidebar.subheader("🔍 Search Schools")
     search_mode = st.sidebar.radio("Search by:", ["All Schools", "School Name", "School ID"])
     
@@ -69,10 +70,18 @@ if df is not None:
             st.session_state.zoom = 17
 
 st.sidebar.markdown("---")
-radius = st.sidebar.number_input("Radius (KM)", 0.1, 20.0, 2.0, 0.5)
+
+# --- THE FIX: Form for Radius to avoid "Busy" Map ---
+with st.sidebar.form("map_settings"):
+    st.subheader("📏 Map Settings")
+    new_radius = st.number_input("Radius (KM)", 0.1, 20.0, float(st.session_state.radius), 0.5)
+    submit_button = st.form_submit_button("Update Map & Population")
+    
+    if submit_button:
+        st.session_state.radius = new_radius
 
 # Calculate Population
-pop = get_pop_data(st.session_state.center[0], st.session_state.center[1], radius)
+pop = get_pop_data(st.session_state.center[0], st.session_state.center[1], st.session_state.radius)
 st.sidebar.metric("📊 Total Population", f"{pop:,}")
 
 # --- Map Generation ---
@@ -81,12 +90,13 @@ st.title("🇵🇰 TCF Schools & Population Map")
 m = folium.Map(location=st.session_state.center, zoom_start=st.session_state.zoom, 
                tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google')
 
-folium.Circle(st.session_state.center, radius=radius*1000, color='red', fill=True, fill_opacity=0.1).add_to(m)
+# Radius Circle
+folium.Circle(st.session_state.center, radius=st.session_state.radius*1000, color='red', fill=True, fill_opacity=0.1).add_to(m)
 
+# Cluster Optimization (Fast rendering)
 marker_cluster = MarkerCluster(disableClusteringAtZoom=16).add_to(m)
 
 for _, row in df.iterrows():
-    # --- MISSING FEATURE 2: Detailed Popup ---
     p_html = f"""
     <div style="font-family: Arial; width: 220px; font-size: 13px;">
         <h4 style="margin-bottom:5px; color: #007BFF;">{row['School']}</h4>
@@ -98,7 +108,6 @@ for _, row in df.iterrows():
         <span style="color: #2196f3;"><b>Boys:</b> {row.get('Boys %', '0')}%</span>
     </div>
     """
-    
     is_sel = selected_row is not None and str(row['search_id']) == str(selected_row['search_id'])
     
     folium.Marker(
@@ -108,12 +117,12 @@ for _, row in df.iterrows():
         icon=folium.Icon(color='red' if is_sel else 'green', icon='star' if is_sel else 'info-sign')
     ).add_to(m if is_sel else marker_cluster)
 
-# Map Output with Loop Fix
+# Map Output
 out = st_folium(
     m,
     center=st.session_state.center,
     zoom=st.session_state.zoom,
-    key="tcf_map_v10",
+    key="tcf_map_v11",
     width=1350,
     height=700,
     returned_objects=["last_object_clicked", "center", "zoom"]
@@ -121,13 +130,11 @@ out = st_folium(
 
 # Interaction Logic
 if out:
-    # Zoom/Center update taake radius change par map na hile
     if out.get("center"):
         st.session_state.center = [out["center"]["lat"], out["center"]["lng"]]
     if out.get("zoom"):
         st.session_state.zoom = out["zoom"]
         
-    # Marker click par population center move karna
     if out.get("last_object_clicked"):
         click_lat = out["last_object_clicked"]["lat"]
         click_lon = out["last_object_clicked"]["lng"]
