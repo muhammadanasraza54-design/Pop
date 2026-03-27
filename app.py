@@ -29,7 +29,7 @@ def get_pop_data(lat, lon, rad_km):
             return int(np.nansum(data[data > 0]))
     except: return 0
 
-# --- Data Loading & Cleaning (NaN Fix) ---
+# --- Data Loading & Cleaning ---
 @st.cache_data(show_spinner="Loading Data...")
 def load_data():
     try:
@@ -48,7 +48,7 @@ def load_data():
         st.error(f"Excel File Error: {e}")
         return None
 
-# --- Session State Management ---
+# --- Session State Management (Persistence) ---
 if 'center' not in st.session_state: st.session_state.center = [30.3753, 69.3451]
 if 'zoom' not in st.session_state: st.session_state.zoom = 6
 
@@ -58,6 +58,7 @@ df_full = load_data()
 selected_row = None
 
 if df_full is not None:
+    # --- REGION FILTER ---
     st.sidebar.subheader("🌍 Map Filters")
     if 'Region' in df_full.columns:
         regions = ["All Regions"] + sorted(df_full['Region'].unique().astype(str).tolist())
@@ -66,6 +67,7 @@ if df_full is not None:
     else:
         df = df_full
 
+    # --- Search Schools ---
     st.sidebar.subheader("🔍 Search Schools")
     search_mode = st.sidebar.radio("Search by:", ["All Schools", "School Name", "School ID"])
     
@@ -96,13 +98,15 @@ m = folium.Map(
     zoom_start=st.session_state.zoom, 
     tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
     attr='Google',
-    control_scale=True
+    control_scale=True,
+    prefer_canvas=True # Optimization for speed
 )
 
+# Radius Circle
 folium.Circle(st.session_state.center, radius=radius*1000, color='red', fill=True, fill_opacity=0.1).add_to(m)
 
-# Marker Cluster with fix for pins jumping
-marker_cluster = MarkerCluster(disableClusteringAtZoom=16, spiderfyOnMaxZoom=False).add_to(m)
+# Marker Cluster
+marker_cluster = MarkerCluster(disableClusteringAtZoom=16).add_to(m)
 
 if df_full is not None:
     for _, row in df.iterrows():
@@ -124,26 +128,23 @@ if df_full is not None:
             icon=folium.Icon(color='red' if is_sel else 'green', icon='star' if is_sel else 'info-sign')
         ).add_to(m if is_sel else marker_cluster)
 
-# Final Map Output - Refined for Persistence
+# --- BLANK SCREEN FIX Logic ---
 out = st_folium(
     m,
     center=st.session_state.center,
     zoom=st.session_state.zoom,
-    key="tcf_map_v2",
+    key="tcf_map_v3",
     width=1350,
     height=700,
-    returned_objects=["center", "zoom", "last_object_clicked"]
+    returned_objects=["zoom", "center"], # Minimize data return
+    use_container_width=True
 )
 
-# Logic to prevent jumping back after zoom/pan
+# Update state only when map moves to prevent jump
 if out:
-    new_zoom = out.get("zoom")
-    new_center = out.get("center")
-    
-    if new_zoom and new_zoom != st.session_state.zoom:
-        st.session_state.zoom = new_zoom
-    
-    if new_center:
-        new_coords = [new_center["lat"], new_center["lng"]]
+    if out.get("zoom") and out["zoom"] != st.session_state.zoom:
+        st.session_state.zoom = out["zoom"]
+    if out.get("center"):
+        new_coords = [out["center"]["lat"], out["center"]["lng"]]
         if new_coords != st.session_state.center:
             st.session_state.center = new_coords
