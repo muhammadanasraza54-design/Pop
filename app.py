@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 import folium
-from folium.plugins import MarkerCluster, Search
+from folium.plugins import Search
 from streamlit_folium import st_folium
 import rioxarray
-from pyproj import Transformer
 import numpy as np
+from pyproj import Transformer
 
 st.set_page_config(page_title="TCF Map Tool", layout="wide")
 
@@ -22,10 +22,12 @@ def load_excel():
 
 @st.cache_resource
 def load_raster():
-    # Masking zero values to avoid giant sums
     da = rioxarray.open_rasterio(TIF_FILE, chunks=True)
-    if da.rio.nodata is None:
-        da.rio.write_nodata(0, inplace=True)
+    # NoData handling taake negative values na aayein
+    if da.rio.nodata is not None:
+        da = da.where(da != da.rio.nodata, 0)
+    else:
+        da = da.where(da >= 0, 0)
     return da
 
 def get_pop(da, lat, lon, r_km):
@@ -33,70 +35,64 @@ def get_pop(da, lat, lon, r_km):
         tr = Transformer.from_crs("epsg:4326", da.rio.crs, always_xy=True)
         cx, cy = tr.transform(lon, lat)
         r_m = r_km * 1000
-        
-        # Clipping exactly to radius box
+        # Exact box clip
         subset = da.rio.clip_box(minx=cx-r_m, miny=cy-r_m, maxx=cx+r_m, maxy=cy+r_m)
-        
-        # Taking mean density and multiplying by area to get realistic count
-        # Ya phir agar pixels individual counts hain toh simply sum:
+        # Nansum taake srif numbers count hon
         total = int(np.nansum(subset.values))
-        
-        # Verification: Agar total unrealistic ho (e.g. > 1 Crore in 2km), 
-        # toh pixel scaling factor apply hoga
-        return total if total < 5000000 else int(total / 1000) 
+        return abs(total) # Negative value block
     except:
-        return None
+        return 0
 
 # UI
-st.title("PK TCF Schools & Population Tool")
+st.title("PK TCF School Analysis Tool")
 r_km = st.sidebar.slider("Select Radius (KM):", 1, 10, 2)
 
 df = load_excel()
 da = load_raster()
 
-# Map Setup
-m = folium.Map(location=[30.3753, 69.3451], zoom_start=6, prefer_canvas=True)
+# Map - Simple and Fast
+m = folium.Map(location=[30.3753, 69.3451], zoom_start=6, control_scale=True)
 folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
                  attr='Google', name='Satellite').add_to(m)
 
-# Marker Cluster (Optimization: disable_clustering_at_zoom)
-# Is se zoom karne par circles pins mein badal jayenge
-mc = MarkerCluster(name="TCF Schools", disable_clustering_at_zoom=14).add_to(m)
-
-# Search Layer (Invisible markers for search engine)
-search_fg = folium.FeatureGroup(name="Search Helper", show=False).add_to(m)
+# School Markers (No Clusters)
+# Individual points fast hoti hain agar CircleMarker use karein
+search_group = folium.FeatureGroup(name="Schools").add_to(m)
 
 for _, row in df.iterrows():
-    st_val = str(row.get('Status', 'N/A')).upper()
-    clr = 'red' if 'PR' in st_val else 'blue'
+    status = str(row.get('Status', 'N/A')).upper()
+    color = 'red' if 'PR' in status else 'blue'
     
-    # Standard Marker for Cluster
+    label = f"{row['School']} | Status: {status}"
+    
     folium.CircleMarker(
         location=[row['lat'], row['lon']],
-        radius=5, color=clr, fill=True,
-        popup=f"School: {row['School']}<br>Status: {st_val}"
-    ).add_to(mc)
-    
-    # Hidden Marker for Search
-    folium.Marker(
-        location=[row['lat'], row['lon']],
-        name=f"{row['School']}",
-        icon=folium.Icon(opacity=0)
-    ).add_to(search_fg)
+        radius=5,
+        color=color,
+        fill=True,
+        fill_opacity=0.8,
+        tooltip=label, # Mouse le jane par status dikhega
+        popup=label,   # Click par status dikhega
+        name=label
+    ).add_to(search_group)
 
-Search(layer=search_fg, geom_type='Point', placeholder='Search...', 
-       collapsed=True, search_label='name').add_to(m)
+# Search Bar
+Search(layer=search_group, geom_type='Point', placeholder='School Name...',
+       collapsed=False, search_label='name').add_to(m)
 
-# Display Map
-out = st_folium(m, width=1100, height=600, key="optimized_map")
+# Output
+out = st_folium(m, width=1100, height=600, key="tcf_final_v1")
 
-# Click Logic
+# Population logic
 click = out.get("last_clicked")
 if click:
     lat, lon = click['lat'], click['lng']
-    st.sidebar.markdown(f"### 📍 Data for {r_km}km")
+    st.sidebar.markdown(f"### 📍 Stats for {r_km}KM")
     with st.sidebar.spinner("Calculating..."):
-        val = get_pop(da, lat, lon, r_km)
-    if val:
-        st.sidebar.metric("Population", f"{val:,}")
-    st.sidebar.write(f"Coords: {lat:.4f}, {lon:.4f}")
+        pop_count = get_pop(da, lat, lon, r_km)
+    
+    if pop_count > 0:
+        st.sidebar.success(f"Estimated Population: **{pop_count:,}**")
+    else:
+        st.sidebar.warning("No population data in this area.")
+    st.sidebar.write(f"Lat: {lat:.4f}, Lon: {lon:.4f}")
