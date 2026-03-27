@@ -2,3 +2,11 @@ streamlit
 pandas
 folium
 streamlit-folium
+openpyxl
+xarray
+rioxarray
+numpy
+pyproj
+shapely
+dask
+toolz
