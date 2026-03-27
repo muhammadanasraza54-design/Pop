@@ -3,3 +3,8 @@ pandas
 folium
 streamlit-folium
 openpyxl
+rasterio
+rioxarray
+numpy
+pyproj
+shapely
