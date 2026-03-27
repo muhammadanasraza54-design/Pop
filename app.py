@@ -15,7 +15,7 @@ st.set_page_config(page_title="TCF Engineering Map", layout="wide")
 EXCEL_FILE = "SSR_Final_Fixed.xlsx"
 POP_FILE = "pak_total_Pop FN.tif"
 
-# --- Population Logic (Cached for Speed) ---
+# --- Population Logic ---
 @st.cache_data
 def get_pop_data(lat, lon, rad_km):
     if not os.path.exists(POP_FILE): return 0
@@ -43,15 +43,31 @@ def load_data():
 # --- Session State ---
 if 'center' not in st.session_state: st.session_state.center = [30.3753, 69.3451]
 if 'zoom' not in st.session_state: st.session_state.zoom = 6
-if 'radius' not in st.session_state: st.session_state.radius = 2.0
 
 # Sidebar
 st.sidebar.title("🏗️ TCF Engineering")
-df = load_data()
+df_full = load_data()
 selected_row = None
 
-if df is not None:
-    # --- Search Schools ---
+if df_full is not None:
+    # --- NEW FEATURE: Region Filter (Map ko light karne ke liye) ---
+    st.sidebar.subheader("🌍 Map Filters")
+    # Agar aapki excel mein 'Region' ya 'Province' ka column hai to wo use karein
+    region_col = 'Region' if 'Region' in df_full.columns else None
+    
+    if region_col:
+        regions = ["All Regions"] + sorted(df_full[region_col].unique().tolist())
+        selected_region = st.sidebar.selectbox("Select Region:", regions)
+        
+        if selected_region != "All Regions":
+            df = df_full[df_full[region_col] == selected_region]
+        else:
+            df = df_full
+    else:
+        # Agar Region ka column nahi hai, to dropdown khali show na ho
+        df = df_full
+
+    # --- Search Schools (Filtered Data mein se) ---
     st.sidebar.subheader("🔍 Search Schools")
     search_mode = st.sidebar.radio("Search by:", ["All Schools", "School Name", "School ID"])
     
@@ -70,18 +86,10 @@ if df is not None:
             st.session_state.zoom = 17
 
 st.sidebar.markdown("---")
-
-# --- THE FIX: Form for Radius to avoid "Busy" Map ---
-with st.sidebar.form("map_settings"):
-    st.subheader("📏 Map Settings")
-    new_radius = st.number_input("Radius (KM)", 0.1, 20.0, float(st.session_state.radius), 0.5)
-    submit_button = st.form_submit_button("Update Map & Population")
-    
-    if submit_button:
-        st.session_state.radius = new_radius
+radius = st.sidebar.number_input("Radius (KM)", 0.1, 20.0, 2.0, 0.5)
 
 # Calculate Population
-pop = get_pop_data(st.session_state.center[0], st.session_state.center[1], st.session_state.radius)
+pop = get_pop_data(st.session_state.center[0], st.session_state.center[1], radius)
 st.sidebar.metric("📊 Total Population", f"{pop:,}")
 
 # --- Map Generation ---
@@ -91,11 +99,12 @@ m = folium.Map(location=st.session_state.center, zoom_start=st.session_state.zoo
                tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google')
 
 # Radius Circle
-folium.Circle(st.session_state.center, radius=st.session_state.radius*1000, color='red', fill=True, fill_opacity=0.1).add_to(m)
+folium.Circle(st.session_state.center, radius=radius*1000, color='red', fill=True, fill_opacity=0.1).add_to(m)
 
-# Cluster Optimization (Fast rendering)
+# Marker Cluster
 marker_cluster = MarkerCluster(disableClusteringAtZoom=16).add_to(m)
 
+# Only iterate through FILTERED data (Heavy load fix)
 for _, row in df.iterrows():
     p_html = f"""
     <div style="font-family: Arial; width: 220px; font-size: 13px;">
@@ -108,6 +117,7 @@ for _, row in df.iterrows():
         <span style="color: #2196f3;"><b>Boys:</b> {row.get('Boys %', '0')}%</span>
     </div>
     """
+    
     is_sel = selected_row is not None and str(row['search_id']) == str(selected_row['search_id'])
     
     folium.Marker(
@@ -122,7 +132,7 @@ out = st_folium(
     m,
     center=st.session_state.center,
     zoom=st.session_state.zoom,
-    key="tcf_map_v11",
+    key="tcf_map_v13",
     width=1350,
     height=700,
     returned_objects=["last_object_clicked", "center", "zoom"]
@@ -138,6 +148,6 @@ if out:
     if out.get("last_object_clicked"):
         click_lat = out["last_object_clicked"]["lat"]
         click_lon = out["last_object_clicked"]["lng"]
-        if [click_lat, click_lon] != st.session_state.center:
+        if round(click_lat, 4) != round(st.session_state.center[0], 4):
             st.session_state.center = [click_lat, click_lon]
             st.rerun()
