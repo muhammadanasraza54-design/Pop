@@ -25,7 +25,6 @@ def get_pop_data(lat, lon, rad_km):
     try:
         if not os.path.exists(POP_FILE):
             return None
-        
         with rasterio.open(POP_FILE) as ds:
             window = from_bounds(left, bottom, right, top, ds.transform)
             data = ds.read(1, window=window)
@@ -39,7 +38,6 @@ def load_excel_data():
     try:
         df = pd.read_excel(EXCEL_FILE)
         df.columns = df.columns.str.strip()
-        # ID dhoondne ke liye logic
         id_cols = [col for col in df.columns if 'ID' in col.upper() or 'CODE' in col.upper()]
         id_col = id_cols[0] if id_cols else df.columns[0]
         df['search_id'] = df[id_col].astype(str)
@@ -48,9 +46,14 @@ def load_excel_data():
         st.error(f"Excel File Error: {e}")
         return None
 
-# Initialize Session State
-if 'pos' not in st.session_state:
-    st.session_state.pos = [30.3753, 69.3451]
+# --- Session State Initialization ---
+# Is se map ki location save rahegi
+if 'map_center' not in st.session_state:
+    st.session_state.map_center = [30.3753, 69.3451]
+if 'map_zoom' not in st.session_state:
+    st.session_state.map_zoom = 6
+if 'last_radius' not in st.session_state:
+    st.session_state.last_radius = 2.0
 
 # --- Sidebar Logic ---
 st.sidebar.title("🏗️ TCF Engineering")
@@ -67,42 +70,44 @@ if data is not None:
         name_search = st.sidebar.selectbox("School Name:", name_options)
         if name_search != "Select...":
             selected_row = data[data['School'] == name_search].iloc[0]
-            st.session_state.pos = [selected_row['lat'], selected_row['lon']]
+            st.session_state.map_center = [selected_row['lat'], selected_row['lon']]
+            st.session_state.map_zoom = 16
             
     elif search_mode == "School ID":
         id_options = ["Select..."] + sorted(data['search_id'].dropna().unique().tolist())
         id_search = st.sidebar.selectbox("School ID:", id_options)
         if id_search != "Select...":
             selected_row = data[data['search_id'] == id_search].iloc[0]
-            st.session_state.pos = [selected_row['lat'], selected_row['lon']]
+            st.session_state.map_center = [selected_row['lat'], selected_row['lon']]
+            st.session_state.map_zoom = 16
 
 st.sidebar.markdown("---")
 
-# Radius & Population
+# Radius Input
 st.sidebar.subheader("📏 Population Radius")
-radius = st.sidebar.number_input("Enter Radius (KM)", min_value=0.1, max_value=50.0, value=2.0, step=0.5)
+radius = st.sidebar.number_input("Enter Radius (KM)", min_value=0.1, max_value=50.0, value=float(st.session_state.last_radius), step=0.5)
+st.session_state.last_radius = radius
 
-total_pop = get_pop_data(st.session_state.pos[0], st.session_state.pos[1], radius)
+# Current Population based on Center
+total_pop = get_pop_data(st.session_state.map_center[0], st.session_state.map_center[1], radius)
 
 if total_pop is not None:
     st.sidebar.metric("📊 Total Population", f"{total_pop:,}")
-    st.sidebar.caption(f"📍 {st.session_state.pos[0]:.4f}, {st.session_state.pos[1]:.4f}")
+    st.sidebar.caption(f"📍 {st.session_state.map_center[0]:.4f}, {st.session_state.map_center[1]:.4f}")
 
 # --- Map Setup ---
 st.title("🇵🇰 TCF Schools & Population Map")
 
-zoom_lvl = 16 if selected_row is not None else 6
-
 m = folium.Map(
-    location=st.session_state.pos, 
-    zoom_start=zoom_lvl, 
+    location=st.session_state.map_center, 
+    zoom_start=st.session_state.map_zoom, 
     tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
     attr='Google'
 )
 
-# Radius Circle
+# Radius Circle at Center
 folium.Circle(
-    st.session_state.pos, 
+    st.session_state.map_center, 
     radius=radius*1000, 
     color='red', 
     fill=True, 
@@ -116,34 +121,34 @@ marker_cluster = MarkerCluster(name="TCF Clusters").add_to(m)
 if data is not None:
     for index, row in data.iterrows():
         if pd.notnull(row['lat']) and pd.notnull(row['lon']):
-            # Yahan Popup ka sara data wapis add kiya hai
             popup_html = f"""
-            <div style="font-family: Arial; width: 220px; font-size: 13px;">
-                <h4 style="margin-bottom:5px; color: #007BFF;">{row['School']}</h4>
+            <div style="font-family: Arial; width: 200px;">
+                <h4 style="color: #007BFF; margin-bottom:5px;">{row['School']}</h4>
                 <b>ID:</b> {row['search_id']}<br>
                 <b>Status:</b> {row.get('Status', 'N/A')}<br>
-                <b>Utilization:</b> {row.get('Operational Utilization', 'N/A')}<br>
-                <hr style="margin: 5px 0;">
-                <span style="color: #e91e63;"><b>Girls:</b> {row.get('Girls %', '0')}%</span> | 
-                <span style="color: #2196f3;"><b>Boys:</b> {row.get('Boys %', '0')}%</span>
+                <b>Utilization:</b> {row.get('Operational Utilization', 'N/A')}
             </div>
             """
-            
-            is_selected = selected_row is not None and str(row['search_id']) == str(selected_row['search_id'])
-            
             folium.Marker(
                 location=[row['lat'], row['lon']],
-                popup=folium.Popup(popup_html, max_width=300),
+                popup=folium.Popup(popup_html, max_width=250),
                 tooltip=row['School'],
-                icon=folium.Icon(color='red' if is_selected else 'green', icon='star' if is_selected else 'info-sign')
-            ).add_to(marker_cluster if not is_selected else m)
+                icon=folium.Icon(color='green', icon='info-sign')
+            ).add_to(marker_cluster)
 
-# Render Map
-out = st_folium(m, width=1350, height=750, key=f"map_{st.session_state.pos}_{radius}")
+# Render Map (Important: we use center and zoom from session state)
+out = st_folium(m, width=1350, height=750, key="main_map")
 
-# Handle Map Click
-if out.get("last_clicked"):
-    new_pos = [out["last_clicked"]["lat"], out["last_clicked"]["lng"]]
-    if new_pos != st.session_state.pos:
-        st.session_state.pos = new_pos
-        st.rerun()
+# Update Session State when user moves the map or clicks
+if out is not None:
+    if out.get("center"):
+        st.session_state.map_center = [out["center"]["lat"], out["center"]["lng"]]
+    if out.get("zoom"):
+        st.session_state.map_zoom = out["zoom"]
+    
+    # Agar pin par click ho to population recalculate ho
+    if out.get("last_clicked"):
+        click_pos = [out["last_clicked"]["lat"], out["last_clicked"]["lng"]]
+        if click_pos != st.session_state.map_center:
+            st.session_state.map_center = click_pos
+            st.rerun()
