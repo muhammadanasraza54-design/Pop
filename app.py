@@ -4,7 +4,6 @@ import folium
 from folium.plugins import MarkerCluster, Search
 from streamlit_folium import st_folium
 import rioxarray
-import numpy as np
 from pyproj import Transformer
 
 # 1. Page Config
@@ -21,7 +20,6 @@ def load_excel():
         df = pd.read_excel(EXCEL_FILE)
         df.columns = df.columns.str.strip()
         df.dropna(subset=['lat', 'lon'], inplace=True)
-        # Status column check
         if 'Status' not in df.columns: df['Status'] = "N/A"
         return df
     except Exception as e:
@@ -31,6 +29,7 @@ def load_excel():
 @st.cache_resource
 def load_raster():
     try:
+        # Load with chunks for better performance
         return rioxarray.open_rasterio(TIF_FILE, chunks={'x': 512, 'y': 512})
     except Exception as e:
         st.error(f"TIF Error: {e}")
@@ -42,73 +41,94 @@ def get_pop(da, lat, lon, r_km):
         tr = Transformer.from_crs("epsg:4326", da.rio.crs, always_xy=True)
         cx, cy = tr.transform(lon, lat)
         r_m = r_km * 1000
+        # Dynamic Clip based on selected radius
         box = da.rio.clip_box(minx=cx-r_m, miny=cy-r_m, maxx=cx+r_m, maxy=cy+r_m)
-        return int(box.where(box > 0).sum().compute())
-    except: return None
+        total = int(box.where(box > 0).sum().compute())
+        return total
+    except:
+        return None
 
-# --- Main App ---
+# --- Application ---
 st.title("PK TCF Schools & Population Density Tool")
 
 # Sidebar
+st.sidebar.header("Settings")
 r_km = st.sidebar.slider("Select Radius (KM):", 1, 10, 2)
+
 df = load_excel()
 da = load_raster()
 
 if df is not None:
-    # Map setup
+    # Initial Map
     m = folium.Map(location=[30.3753, 69.3451], zoom_start=6)
-    folium.TileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
-                     attr='Google', name='Satellite').add_to(m)
-
-    # 1. Marker Cluster
-    mc = MarkerCluster(name="TCF Schools").add_to(m)
     
-    # 2. Search Layer (Markers without Cluster for Search Plugin)
-    search_fg = folium.FeatureGroup(name="Search Layer", show=False).add_to(m)
+    # Satellite Layer
+    folium.TileLayer(
+        tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+        attr='Google', name='Google Satellite', overlay=True
+    ).add_to(m)
+
+    # Cluster for Visuals
+    mc = MarkerCluster(name="TCF Schools").add_to(m)
+    # Search Layer for Search Plugin
+    search_fg = folium.FeatureGroup(name="Search Helper", show=False).add_to(m)
 
     for _, row in df.iterrows():
         st_val = str(row['Status']).upper()
-        # Rang: PR = Red, SC = Blue
         clr = 'red' if 'PR' in st_val else 'blue' if 'SC' in st_val else 'green'
         
-        # Pop-up design
-        pop_txt = f"<b>School:</b> {row['School']}<br><b>Status:</b> {st_val}<br><b>ID:</b> {row.iloc[0]}"
+        popup_html = f"<b>School:</b> {row['School']}<br><b>Status:</b> {st_val}<br><b>ID:</b> {row.iloc[0]}"
         
-        # Cluster Marker
-        folium.CircleMarker(
+        # Add to Cluster
+        marker = folium.CircleMarker(
             location=[row['lat'], row['lon']],
-            radius=6, color=clr, fill=True, popup=pop_txt
-        ).add_to(mc)
-
-        # Search Marker (Invisible but searchable)
+            radius=7, color=clr, fill=True, fill_opacity=0.7,
+            popup=folium.Popup(popup_html, max_width=250)
+        )
+        marker.add_to(mc)
+        
+        # Add to Search Group (Invisible)
         folium.Marker(
             location=[row['lat'], row['lon']],
             name=f"{row['School']} ({st_val})",
-            icon=folium.Icon(color="white", icon_color="white", opacity=0)
+            icon=folium.Icon(opacity=0)
         ).add_to(search_fg)
 
-    # Search bar add karein
+    # Add Search
     Search(
         layer=search_fg,
         geom_type='Point',
-        placeholder='School ka naam likhen...',
+        placeholder='Search School...',
         collapsed=False,
         search_label='name'
     ).add_to(m)
 
-    # Display Map
-    out = st_folium(m, width=1200, height=650, key="fixed_map")
+    folium.LayerControl().add_to(m)
 
-    # Population logic on click
-    click = out.get("last_clicked")
-    if click:
-        lat, lon = click['lat'], click['lng']
+    # Render Map - Catch output in a variable
+    map_data = st_folium(m, width=1200, height=650, key="tcf_v5")
+
+    # --- Population Display (Important!) ---
+    # Click data fetch karein
+    click_info = None
+    if map_data.get("last_clicked"):
+        click_info = map_data["last_clicked"]
+    elif map_data.get("last_object_clicked"):
+        click_info = map_data["last_object_clicked"]
+
+    if click_info:
+        lat, lon = click_info['lat'], click_info['lng']
+        
+        # Sidebar mein result dikhayein
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📍 Selected Location")
+        
         with st.sidebar:
-            st.markdown("---")
-            st.subheader("📍 Location Info")
-            val = get_pop(da, lat, lon, r_km)
+            with st.spinner("Calculating..."):
+                val = get_pop(da, lat, lon, r_km)
+            
             if val is not None:
-                st.metric(f"Population ({r_km}km)", f"{val:,}")
-                st.write(f"Lat: {lat:.4f}, Lon: {lon:.4f}")
+                st.success(f"Population within **{r_km}km**: **{val:,}**")
+                st.info(f"Lat: {lat:.5f}, Lon: {lon:.5f}")
             else:
-                st.warning("Data not found.")
+                st.warning("Is jagah ka population data nahi mila.")
