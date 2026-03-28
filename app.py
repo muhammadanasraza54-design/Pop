@@ -141,27 +141,54 @@ marker_cluster = MarkerCluster(disableClusteringAtZoom=16).add_to(m)
 
 if df_full is not None:
     for _, row in df.iterrows():
+        # --- 1. Excel se naye Fields uthayein ---
+        status_raw = row.get('Status', 'N/A')
+        # Agar 'M' hai to 'Operational' dikhayein, warna jo likha hai wahi
+        status_text = "Operational" if status_raw == 'M' else status_raw
+        
+        util_val = row.get('Operational Utilization', 0.0)
+        loc_detail = row.get('Location', 'N/A')
+        dist_name = row.get('District', 'N/A')
+        
+        # Utilization ke liye color logic (100% se upar Red, warna Green)
+        util_box_color = "#DC3545" if util_val > 100 else "#28A745"
+
+        # --- 2. p_html ko update karein (Line 144 onwards) ---
         p_html = f"""
-        <div style="font-family: Arial; width: 200px;">
-            <h4 style="color:#007BFF; margin-bottom:5px;">{row['School']}</h4>
-            <b>ID:</b> {row['search_id']}<br>
-            <b>Region:</b> {row.get('Region', 'N/A')}<br>
-            <hr style="margin:5px 0;">
-            <span style="color:red;">Girls: {row.get('Girls %', 0)}%</span> | 
-            <span style="color:blue;">Boys: {row.get('Boys %', 0)}%</span>
+        <div style="font-family: 'Segoe UI', Arial; width: 260px; line-height: 1.5; padding: 5px;">
+            <h4 style="color:#007BFF; margin:0 0 8px 0; border-bottom: 2px solid #007BFF; padding-bottom: 3px;">
+                {row['School']}
+            </h4>
+            
+            <p style="margin:3px 0;"><b>ID:</b> {row['search_id']}</p>
+            <p style="margin:3px 0;"><b>Location:</b> {loc_detail}, {dist_name}</p>
+            <p style="margin:3px 0;"><b>Status:</b> 
+                <span style="color:#28A745; font-weight:bold;">{status_text}</span>
+            </p>
+
+            <div style="background-color:#f8f9fa; padding:10px; border-radius:5px; border-left:6px solid {util_box_color}; margin:10px 0;">
+                <span style="font-size:0.85em; color:#666; text-transform: uppercase;">Operational Utilization</span><br>
+                <b style="font-size:1.2em; color:{util_box_color};">{util_val}%</b>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; margin-top: 5px; background: #eef2f7; padding: 5px; border-radius: 3px;">
+                <span style="color:#E83E8C; font-weight:bold;">♀ Girls: {row.get('Girls %', 0)}%</span>
+                <span style="color:#007BFF; font-weight:bold;">♂ Boys: {row.get('Boys %', 0)}%</span>
+            </div>
         </div>
         """
+
+        # --- Baqi code (is_sel aur Marker) waisa hi rahega ---
         is_sel = (selected_row is not None and 
                   str(row['search_id']) == str(selected_row['search_id']))
         
         folium.Marker(
             [row['lat'], row['lon']], 
-            popup=folium.Popup(p_html, max_width=300),
+            popup=folium.Popup(p_html, max_width=350),
             tooltip=row['School'],
             icon=folium.Icon(color='red' if is_sel else 'green', 
                              icon='star' if is_sel else 'info-sign')
         ).add_to(m if is_sel else marker_cluster)
-
 # --- Map Output with Click Control ---
 # Note: yahan humne zoom aur center ko st_folium ke parameters se control kiya hai
 out = st_folium(
