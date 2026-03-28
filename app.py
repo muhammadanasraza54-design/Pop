@@ -147,6 +147,7 @@ if df_full is not None:
         ).add_to(m if is_sel else marker_cluster)
 
 # --- Map Output with Click Control ---
+# Note: yahan humne zoom aur center ko st_folium ke parameters se control kiya hai
 out = st_folium(
     m,
     center=st.session_state.center,
@@ -158,18 +159,34 @@ out = st_folium(
     use_container_width=True
 )
 
-# Interaction Logic
+# Interaction Logic (FIXED)
 if out:
-    # 1. Zoom persistence taake zoom level reset na ho
-    if out.get("zoom") and out["zoom"] != st.session_state.zoom:
+    # 1. Zoom persistence: Sirf tab update karein jab waqai change ho
+    if out.get("zoom") is not None and out["zoom"] != st.session_state.zoom:
         st.session_state.zoom = out["zoom"]
+
+    # 2. Click detection: Sirf click hone par center change karein
+    # Is logic ko optimize kiya hai taake zoom karne par ye trigger na ho
+    curr_clicked = out.get("last_clicked")
     
-    # 2. Click detection: Kahin bhi click karein wahan ki population show hogi
-    if out.get("last_clicked"):
-        click_lat = out["last_clicked"]["lat"]
-        click_lng = out["last_clicked"]["lng"]
+    if curr_clicked:
+        click_lat = curr_clicked["lat"]
+        click_lng = curr_clicked["lng"]
         
-        # Check if click is actually a new location
-        if [click_lat, click_lng] != st.session_state.center:
+        # Check karein ke kya ye click purane center se mukhtalif hai?
+        # precision check (0.0001) taake floating point error se rerun na ho
+        if (abs(click_lat - st.session_state.center[0]) > 0.0001 or 
+            abs(click_lng - st.session_state.center[1]) > 0.0001):
+            
             st.session_state.center = [click_lat, click_lng]
-            st.rerun() # Naye point ki population aur circle ke liye rerun lazmi hai
+            # Jab hum school search karte hain to zoom 17 hota hai, 
+            # usko barqarar rakhne ke liye hum yahan zoom reset nahi karenge
+            st.rerun()
+
+    # 3. Map Panning: Agar user map move kare (click nahi), 
+    # to center update karein baghair rerun kiye taake view jump na kare
+    if out.get("center") is not None:
+        new_center = [out["center"]["lat"], out["center"]["lng"]]
+        if new_center != st.session_state.center:
+            # Hum sirf state update kar rahe hain, rerun nahi
+            st.session_state.center = new_center
