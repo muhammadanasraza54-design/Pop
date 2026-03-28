@@ -95,9 +95,25 @@ if df_full is not None:
     st.sidebar.markdown("---")
     radius = st.sidebar.number_input("Radius (KM)", 0.1, 20.0, 2.0, 0.5)
     
-    # Population Calculation
-    pop = get_pop_data(st.session_state.center[0], st.session_state.center[1], radius)
-    st.sidebar.metric("📊 Total Population", f"{pop:,}")
+    # --- Population Calculation & Distribution ---
+total_pop = get_pop_data(st.session_state.center[0], st.session_state.center[1], radius)
+
+if total_pop > 0:
+    # Pakistan Census trends ke mutabiq approximate percentages
+    primary_ratio = 0.135  # 13.5% (Age 5-9)
+    secondary_ratio = 0.115 # 11.5% (Age 10-14)
+
+    primary_kids = int(total_pop * primary_ratio)
+    secondary_kids = int(total_pop * secondary_ratio)
+
+    # Sidebar mein display karne ke liye
+    st.sidebar.metric("📊 Total Population", f"{total_pop:,}")
+    
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        st.metric("🎒 Primary (5-9)", f"{primary_kids:,}")
+    with col2:
+        st.metric("🏫 Secondary (10-14)", f"{secondary_kids:,}")
 
 # --- Main Map View ---
 st.title("🇵🇰 TCF Schools & Population Map")
