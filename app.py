@@ -233,3 +233,4 @@ if out:
         if new_center != st.session_state.center:
             # Hum sirf state update kar rahe hain, rerun nahi
             st.session_state.center = new_center
+
