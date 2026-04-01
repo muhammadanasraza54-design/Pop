@@ -66,7 +66,8 @@ if df_full is not None:
     # Map Filters
     st.sidebar.subheader("🌍 Map Filters")
     if 'Region' in df_full.columns:
-        regions = ["All Regions"] + sorted(df_full['Region'].unique().astype(str).tolist())
+        regions_list = df_full['Region'].dropna().unique().astype(str).tolist()
+regions = ["All Regions"] + sorted(regions_list)
         selected_region = st.sidebar.selectbox("Select Region:", regions)
         df = df_full[df_full['Region'] == selected_region] if selected_region != "All Regions" else df_full
     else:
